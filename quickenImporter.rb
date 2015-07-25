@@ -15,46 +15,63 @@
 # 23.05.2015: V0.01 initial version, basic ruby setup, reading file
 # 15.07.2015: V0.02 basic output creation finished 
 # 20.07.2015: V0.03 DWS transaction csv input format implemented
+# 21.07.2015: V0.04 QIF format implemented; not yet checked for completeness 
+# 23.07.2015: V0.05 writing into output file, format conversions implemented; datefrom and dateto implemented
 #
+# Todos
+# Transaction type "Ausgabe" checken
+# Transaction type "Verkauf" checken
+#
+# Mapping infile to outfile transaction types:
+# "Beitrag" -> Kauf
+# "Umschichtung" -> Verkauf
+# "Depotentgeld" -> Verkauf
+# "Gutschrift Zulage" -> Ausgabe 
+# "Gutschrift Kinderzulage" -> Ausgabe 
+# ??? -> Retshrs
+# ??? -> OthrInc
+#
+
+require 'date'
 
 # Constants
 USAGE = <<ENDUSAGE
 Usage:
-   quickenImporter [-v] [-h] [-i] [-f [inputfilename]]
+   quickenImporter [-v] [-h] [-i] [-f [inputfilename]] [-df [from_date]] [-dt [to_date]]
 ENDUSAGE
 
 HELP = <<ENDHELP
    -h, --help       Show this help.
    -v, --version    Show the version number.
-   -i, --inspect    Inspect processing details
+   -i, --inspect    Inspect processing details.
    -f, --file       Specify the input file name.
+   -df,--datefrom	Convert transactions after or same as given date, ignore the rest 
+   -dt,--dateto		Convert transactions before or same as given date, ignore the rest 
 ENDHELP
 
-VERSION = "0.03"
+VERSION = "0.05"
 
 # FILE FORMATS
 IN_NO_OF_ATTRIBUTES = 9
 IN_DELIMITER = ";"
-OUT_DELIMITER = "\r\n"
+OUT_DELIMITER = "\n"
 in_structure  = [:preistag, :umsatzart, :fondsname, :investmentfonds, :zusatzinformation, :anteile, :preis, :betrag, :waehrung]
 # out_structure = {:start=>nil, :val1=>nil, :val4=>nil, :val3=>nil, :val2=>nil, :end=>nil}  not used
-
-# Infile Transaction types:
-# "Beitrag" = Kauf
-# "Umschichtung" = Verkauf
-# "Depotentgeld" = Gebühren
-# "Gutschrift Zulage" = Kauf 
-# "Gutschrift Kinderzulage" = Kauf 
-
 
 # Read command line params
 nextarg = nil
 filename = nil
+datefrom = Date.new
+dateto = Date.new
 inspect = false
 ARGV.each do |arg|
   case arg
     when "-f","--file" then
 	  nextarg = :file
+    when "-df","--datefrom" then
+	  nextarg = :datefrom
+    when "-dt","--dateto" then
+	  nextarg = :dateto
     when "-v","--version" then
       print "\n" + $0 + " version " + VERSION + "\n"
     when "-i","--inspect" then
@@ -64,6 +81,10 @@ ARGV.each do |arg|
     else
       if nextarg == :file
 	    filename = arg
+      elsif nextarg == :datefrom
+	    datefrom = Date.parse(arg)
+      elsif nextarg == :dateto
+	    dateto = Date.parse(arg)
 	  else
         puts USAGE
 		break
@@ -85,9 +106,11 @@ if filename
       puts line
 	end
   end
+  file.close
 end
 
-# Process records
+# Import records
+in_record_counter = 0
 if inspect
   puts "Importiere Werte ..."
 end
@@ -95,6 +118,7 @@ in_records = Array.new							# array of hashes
 lines.each do |line|
   line = line.chomp("\n")						# remove EOL (any better idea to do it smarter?
   if line.length != 0
+    in_record_counter = in_record_counter + 1
     line_array = line.split(IN_DELIMITER)         # [wert1, wert2, wert3, wert4]
     if line_array.length != IN_NO_OF_ATTRIBUTES
 	  if inspect
@@ -116,19 +140,42 @@ if inspect
   puts "\nWerte importiert: #{in_records.length} Datensätze eingelesen"
 end
 
-# Create output records
-out_records = Array.new							# array of hashes
-in_records = in_records.drop(1)					# remove header line 
+# Map input to output records
+out_records = Array.new													# array of hashes
+in_records = in_records.drop(1)											# remove header line 
+in_record_counter = in_record_counter - 1 
 in_records.each do |record|
-  out_record = Hash.new
-#  out_record = out_structure					# does not work
-  out_record[:start] = "START"
-  out_record[:val1] = record[:fondsname]
-  out_record[:val2] = record[:preis]
-  out_record[:val3] = record[:anteile]
-  out_record[:val4] = record[:umsatzart]
-  out_record[:end] = "END"
-  out_records << out_record
+#  out_record = out_structure											# does not work
+  date = Date.strptime(record[:preistag].to_s, "%d.%m.%Y")
+  if (date >= datefrom and date <= dateto) 
+    date = date.strftime("%m.%d.%Y")										# qif requires format "month"."day"."year"
+    out_record = Hash.new
+    out_record[:D] = date													# transaction date
+    out_record[:V] = date													# valuta date
+    out_record[:U] = record[:betrag].to_s.gsub(',', '.').to_f				# transaction amount
+    case record[:umsatzart]												# transaction type
+      when "Beitrag"
+	    out_record[:N] = "Kauf"
+      when "Umschichtung"
+	    out_record[:N] = "Verkauf"
+      when "Depotentgelt"
+	    out_record[:N] = "Verkauf"
+	  when "Gutschrift Zulage"
+	    out_record[:N] = "Ausgabe"
+	  when "Gutschrift Kinderzulage"
+	    out_record[:N] = "Ausgabe"
+	  else
+	    puts "Unknown Transaction: " + record[:umsatzart]
+	    Kernel.exit
+    end
+    out_record[:F] = record[:waehrung]									# currency
+#   out_record[:G] = "1.000000"											# ???
+    out_record[:Y] = record[:fondsname].split('/')[1].strip				# fonds name
+    out_record[:L] = "|[" + record[:fondsname].split('/')[0].strip + "]"	# category or transfer and (optionally) Class
+    out_record[:I] = record[:preis].to_s.gsub(',', '.').to_f				# price of a share
+    out_record[:Q] = record[:anteile].to_s.gsub(',', '.').to_f			# number of shares
+    out_records << out_record
+  end
 end
 if inspect
   puts "\nOutput records:\n"
@@ -136,15 +183,30 @@ if inspect
 end
 
 # Write output file
-out_records.each do |record|
-  record.each do |key, value|
-    print key
-	print " "
-    print value
-	print OUT_DELIMITER
-  end
-  
-  
-  
+filename = filename + ".qif"
+file = File.new(filename, "w")
+out_record_counter = 0
+if inspect
+  puts "!Type:Invst"
 end
+printf(file, "!Type:Invst\n")
+out_records.each do |record|
+  out_record_counter = out_record_counter + 1
+  record.each do |key, value|
+    if inspect
+      print key
+      print value
+	  print OUT_DELIMITER
+	end
+	printf(file, "%s%s%s", key, value, OUT_DELIMITER)
+  end
+  if inspect
+    puts "^"  
+  end
+  printf(file, "^\n")
+end
+file.close
 
+puts "\r\nDONE\r\n"
+puts "Read " + in_record_counter.to_s + " records\r\n"
+puts "Wrote " + out_record_counter.to_s + " records\r\n"
