@@ -17,19 +17,15 @@
 # 20.07.2015: V0.03 DWS transaction csv input format implemented
 # 21.07.2015: V0.04 QIF format implemented; not yet checked for completeness 
 # 23.07.2015: V0.05 writing into output file, format conversions implemented; datefrom and dateto implemented
+# 27.07.2015: V0.90 minor corrections, unit tested successfully
 #
-# Todos
-# Transaction type "Ausgabe" checken
-# Transaction type "Verkauf" checken
 #
 # Mapping infile to outfile transaction types:
 # "Beitrag" -> Kauf
 # "Umschichtung" -> Verkauf
 # "Depotentgeld" -> Verkauf
-# "Gutschrift Zulage" -> Ausgabe 
-# "Gutschrift Kinderzulage" -> Ausgabe 
-# ??? -> Retshrs
-# ??? -> OthrInc
+# "Gutschrift Zulage" -> Kauf 
+# "Gutschrift Kinderzulage" -> Kauf 
 #
 
 require 'date'
@@ -49,7 +45,7 @@ HELP = <<ENDHELP
    -dt,--dateto		Convert transactions before or same as given date, ignore the rest 
 ENDHELP
 
-VERSION = "0.05"
+VERSION = "0.90"
 
 # FILE FORMATS
 IN_NO_OF_ATTRIBUTES = 9
@@ -61,9 +57,9 @@ in_structure  = [:preistag, :umsatzart, :fondsname, :investmentfonds, :zusatzinf
 # Read command line params
 nextarg = nil
 filename = nil
-datefrom = Date.new
-dateto = Date.new
 inspect = false
+datefrom = nil
+dateto = nil
 ARGV.each do |arg|
   case arg
     when "-f","--file" then
@@ -139,7 +135,6 @@ if inspect
   end
   puts "\nWerte importiert: #{in_records.length} Datensätze eingelesen"
 end
-
 # Map input to output records
 out_records = Array.new													# array of hashes
 in_records = in_records.drop(1)											# remove header line 
@@ -147,12 +142,11 @@ in_record_counter = in_record_counter - 1
 in_records.each do |record|
 #  out_record = out_structure											# does not work
   date = Date.strptime(record[:preistag].to_s, "%d.%m.%Y")
-  if (date >= datefrom and date <= dateto) 
+  if ((datefrom.nil? or (date >= datefrom)) and (dateto.nil? or (date <= dateto)))
     date = date.strftime("%m.%d.%Y")										# qif requires format "month"."day"."year"
     out_record = Hash.new
     out_record[:D] = date													# transaction date
     out_record[:V] = date													# valuta date
-    out_record[:U] = record[:betrag].to_s.gsub(',', '.').to_f				# transaction amount
     case record[:umsatzart]												# transaction type
       when "Beitrag"
 	    out_record[:N] = "Kauf"
@@ -161,19 +155,30 @@ in_records.each do |record|
       when "Depotentgelt"
 	    out_record[:N] = "Verkauf"
 	  when "Gutschrift Zulage"
-	    out_record[:N] = "Ausgabe"
+	    out_record[:N] = "Kauf"
 	  when "Gutschrift Kinderzulage"
-	    out_record[:N] = "Ausgabe"
+	    out_record[:N] = "Kauf"
 	  else
 	    puts "Unknown Transaction: " + record[:umsatzart]
-	    Kernel.exit
+	    exit
     end
+	
+	record[:betrag]  = record[:betrag].to_s.gsub(',', '.').to_f.abs 		# always use positive values (transaction type indicates increase or decrease of shares) 
+    record[:anteile] = record[:anteile].to_s.gsub(',', '.').to_f.abs	
+    record[:preis]   = record[:preis].to_s.gsub(',', '.').to_f.abs
+
+	if (record[:umsatzart] == "Depotentgelt") then
+	  out_record[:E] = "Depotkosten:Depotgebühren"
+	  out_record[:O] = "0.00|0.00|0.00|0.00|0.00|0.00|0.00|" + record[:betrag].to_s + "|0.00|0.00|0.00|0.00"
+	else
+	  out_record[:U] = record[:betrag]									# transaction amount
+	end
     out_record[:F] = record[:waehrung]									# currency
-#   out_record[:G] = "1.000000"											# ???
     out_record[:Y] = record[:fondsname].split('/')[1].strip				# fonds name
-    out_record[:L] = "|[" + record[:fondsname].split('/')[0].strip + "]"	# category or transfer and (optionally) Class
-    out_record[:I] = record[:preis].to_s.gsub(',', '.').to_f				# price of a share
-    out_record[:Q] = record[:anteile].to_s.gsub(',', '.').to_f			# number of shares
+    out_record[:I] = record[:preis]										# price of a share
+    out_record[:Q] = record[:anteile]									# number of shares
+    out_record[:L] = out_record[:N] == "Verkauf" ? "Kursgewinne:Realisierte Gewinne" : ""
+	out_record[:L] << "|[" + record[:fondsname].split('/')[0].strip + "]"	# category or transfer and (optionally) Class
     out_records << out_record
   end
 end
