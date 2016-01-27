@@ -18,15 +18,19 @@
 # 21.07.2015: V0.04 QIF format implemented; not yet checked for completeness 
 # 23.07.2015: V0.05 writing into output file, format conversions implemented; datefrom and dateto implemented
 # 27.07.2015: V0.90 minor corrections, unit tested successfully
+# 11.09.2015: V0.91 fixed bug in type 'Umschichtung' -> can be Kauf or Verkauf based on +- sign
+# 24.01.2016: V0.92 forced encoding to iso-8859-1; introduced new transaction type 'Rueckforderung Zulage'
 #
 #
 # Mapping infile to outfile transaction types:
 # "Beitrag" -> Kauf
-# "Umschichtung" -> Verkauf
+# "Umschichtung" -> Verkauf or Kauf, based on +- sign
 # "Depotentgeld" -> Verkauf
 # "Gutschrift Zulage" -> Kauf 
 # "Gutschrift Kinderzulage" -> Kauf 
-#
+# "Kauf VL zum Ausgabepreis" -> Kauf
+# "Wiederanlage der Ausschuettung" -> Retshrs
+# "Rueckforderung Zulage" -> Verkauf
 
 require 'date'
 
@@ -45,7 +49,7 @@ HELP = <<ENDHELP
    -dt,--dateto		Convert transactions before or same as given date, ignore the rest 
 ENDHELP
 
-VERSION = "0.90"
+VERSION = "0.92"
 
 # FILE FORMATS
 IN_NO_OF_ATTRIBUTES = 9
@@ -115,7 +119,7 @@ lines.each do |line|
   line = line.chomp("\n")						# remove EOL (any better idea to do it smarter?
   if line.length != 0
     in_record_counter = in_record_counter + 1
-    line_array = line.split(IN_DELIMITER)         # [wert1, wert2, wert3, wert4]
+    line_array = line.force_encoding("iso-8859-1").split(IN_DELIMITER)         # [wert1, wert2, wert3, wert4]
     if line_array.length != IN_NO_OF_ATTRIBUTES
 	  if inspect
 	    puts "Falsche Anzahl an Attributen in Eingangsdatei: #{IN_NO_OF_ATTRIBUTES} erwartet, aber #{line_array.length} gefunden\n"
@@ -151,13 +155,23 @@ in_records.each do |record|
       when "Beitrag"
 	    out_record[:N] = "Kauf"
       when "Umschichtung"
-	    out_record[:N] = "Verkauf"
+	    if record[:betrag].to_s.gsub(',', '.').to_f > 0 then 
+		  out_record[:N] = "Kauf"
+		else
+		  out_record[:N] = "Verkauf"
+        end
       when "Depotentgelt"
+	    out_record[:N] = "Verkauf"
+      when "Rueckforderung Zulage"
 	    out_record[:N] = "Verkauf"
 	  when "Gutschrift Zulage"
 	    out_record[:N] = "Kauf"
 	  when "Gutschrift Kinderzulage"
 	    out_record[:N] = "Kauf"
+	  when "Kauf VL zum Ausgabepreis"
+	    out_record[:N] = "Kauf"
+	  when "Wiederanlage der Ausschuettung"
+	    out_record[:N] = "Retshrs"
 	  else
 	    puts "Unknown Transaction: " + record[:umsatzart]
 	    exit
@@ -174,11 +188,17 @@ in_records.each do |record|
 	  out_record[:U] = record[:betrag]									# transaction amount
 	end
     out_record[:F] = record[:waehrung]									# currency
-    out_record[:Y] = record[:fondsname].split('/')[1].strip				# fonds name
     out_record[:I] = record[:preis]										# price of a share
     out_record[:Q] = record[:anteile]									# number of shares
-    out_record[:L] = out_record[:N] == "Verkauf" ? "Kursgewinne:Realisierte Gewinne" : ""
-	out_record[:L] << "|[" + record[:fondsname].split('/')[0].strip + "]"	# category or transfer and (optionally) Class
+    out_record[:L] = out_record[:N] == "Verkauf" ? "Kursgewinne:Realisierte Gewinne" : out_record[:N] == "Retshrs" ? "Kapitalerträge:sonstige Einnahme" : ""              
+    fondsname = record[:fondsname].split('/')							# fonds name
+    if (fondsname[1]) then
+      out_record[:Y] = fondsname[1].strip				
+	  out_record[:L] << "|[" + fondsname[0].strip + "]"					# category or transfer and (optionally) Class
+	else
+      out_record[:Y] = fondsname[0].strip				
+	end
+	
     out_records << out_record
   end
 end
