@@ -1,13 +1,13 @@
 ﻿#!/usr/bin/env ruby
 #
-# DWS2Finanzmanager
+# DWS2qif
 #
 # Purpose:
 # Read all records of an input file containing transaction data from DWS
-# convert and store them in another file in Quicken qif format
-# This file can subsequently used to import the transactions into Quicken
+# convert and store them in another file in Finanzmanager qif format
+# This file can subsequently used to import the transactions into Finanzmanager
 #
-# Call quickenImporter [-v] [-f [inputfilename]]
+# Call DWS2qif [-v] [-f [inputfilename]]
 #
 # Author: Martin Reese
 #
