@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env ruby
 #
-# QUICKENIMPORTER
+# DWS2Finanzmanager
 #
 # Purpose:
 # Read all records of an input file containing transaction data from DWS
