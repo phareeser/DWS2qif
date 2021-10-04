@@ -22,10 +22,13 @@
 # 24.01.2016: V0.92 forced encoding to iso-8859-1; introduced new transaction type 'Rueckforderung Zulage'
 # 10.02.2018: V0.93 added "Wiederanlage Ertragssteuer"
 # 24.01.2019: V0.94 added "Verwaltungskosten d. Vertrages" and "Verkauf wegen Depotentgelt"
+# 03.10.2020: V0.95 adaption to changed DWS format
 #
 #
 # Mapping infile to outfile transaction types:
 # "Beitrag" -> Kauf
+# "Verkauf aus Umschichtung" -> Verkauf
+# "Kauf aus Umschichtung" -> Kauf
 # "Umschichtung" -> Verkauf or Kauf, based on +- sign
 # "Depotentgelt" -> Verkauf
 # "Verwaltungskosten d. Vertrages" -> Verkauf
@@ -54,13 +57,13 @@ HELP = <<ENDHELP
    -dt,--dateto		Convert transactions before or same as given date, ignore the rest
 ENDHELP
 
-VERSION = "0.94"
+VERSION = "0.95"
 
 # FILE FORMATS
 IN_NO_OF_ATTRIBUTES = 9
 IN_DELIMITER = ";"
 OUT_DELIMITER = "\n"
-in_structure  = [:preistag, :umsatzart, :fondsname, :investmentfonds, :zusatzinformation, :anteile, :preis, :betrag, :waehrung]
+in_structure  = [:preistag, :umsatzart, :portfolio, :fondsname, :ISIN, :anteile, :preis, :betrag, :waehrung]
 # out_structure = {:start=>nil, :val1=>nil, :val4=>nil, :val3=>nil, :val2=>nil, :end=>nil}  not used
 
 # Read command line params
@@ -150,14 +153,18 @@ in_records = in_records.drop(1)											# remove header line
 in_record_counter = in_record_counter - 1
 in_records.each do |record|
 #  out_record = out_structure											# does not work
-  date = Date.strptime(record[:preistag].to_s, "%d.%m.%Y")
+  date = Date.strptime(record[:preistag].to_s, "%Y-%m-%d")
   if ((datefrom.nil? or (date >= datefrom)) and (dateto.nil? or (date <= dateto)))
     date = date.strftime("%m.%d.%Y")										# qif requires format "month"."day"."year"
     out_record = Hash.new
     out_record[:D] = date													# transaction date
     out_record[:V] = date													# valuta date
-    case record[:umsatzart]												# transaction type
+    case record[:umsatzart].strip									# transaction type
       when "Beitrag"
+	      out_record[:N] = "Kauf"
+      when "Verkauf aus Umschichtung"
+	      out_record[:N] = "Verkauf"
+      when "Kauf aus Umschichtung"
 	      out_record[:N] = "Kauf"
       when "Umschichtung"
         if record[:betrag].to_s.gsub(',', '.').to_f > 0
